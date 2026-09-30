@@ -1,0 +1,75 @@
+name: 수집 및 대시보드 게시
+
+on:
+  schedule:
+    # 매시 7분 (UTC). 정각은 GitHub 쪽이 붐벼서 더 늦게 도는 경우가 많다.
+    - cron: '7 * * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 같은 DB 캐시를 두 실행이 동시에 쓰지 않도록 한 번에 하나만 돌린다.
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 이전 실행의 H2 DB. 캐시가 없으면 빈 DB로 시작해 과거 데이터를 자동으로 다시 받는다.
+      - name: DB 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: queten-db-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: queten-db-
+
+      - name: 컴파일
+        run: |
+          mkdir -p out/classes
+          # 톰캣(서블릿 API)이 필요한 클래스는 뺀다.
+          find src/main/java -name '*.java' ! -path '*/web/*' ! -name 'CollectorListener.java' > out/sources.txt
+          javac -encoding UTF-8 -d out/classes -cp "src/main/webapp/WEB-INF/lib/*" @out/sources.txt
+          cp src/main/java/com/queten/db/*.sql out/classes/com/queten/db/
+
+      - name: 수집 + JSON 내보내기
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          QOO10_CERTIFICATION_KEY: ${{ secrets.QOO10_CERTIFICATION_KEY }}
+        run: |
+          java -cp "out/classes:src/main/webapp/WEB-INF/lib/*" com.queten.cli.StaticExport github/config.properties site/data
+          cp src/main/webapp/dashboard.html site/index.html
+
+      # 캐시는 덮어쓸 수 없어서 실행마다 새 키로 저장하고, 복원할 때 가장 최근 것을 고른다.
+      - name: DB 저장
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: queten-db-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>광고 성과 대시보드</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #2a78d6;
+    /* 지표별 색 (Meta 쪽 3색 + Qoo10 결과 지표는 보라 + ROAS) */
+    --series-spend: #2a78d6;
+    --series-imp: #eb6834;
+    --series-click: #008300;
+    --series-qoo10: #4a3aa7;
+    --series-roas: #e34948;
+    --warning-bg: #fab219;
+    --warning-text: #0b0b0b;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.10);
+      --accent: #3987e5;
+      --series-spend: #3987e5;
+      --series-imp: #d95926;
+      --series-click: #008300;
+      --series-qoo10: #9085e9;
+      --series-roas: #e66767;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  }
+  .page { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  .topbar {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    justify-content: space-between; align-items: flex-start;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  .sub { margin: 2px 0 0; color: var(--text-secondary); }
+  .freshness { display: flex; flex-wrap: wrap; gap: 8px; }
+  .fresh {
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-secondary); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .fresh.stale { background: var(--warning-bg); color: var(--warning-text); border-color: transparent; font-weight: 600; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 16px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-secondary);
+    padding: 6px 14px; font: inherit; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+  .filters label { display: inline-flex; gap: 8px; align-items: center; color: var(--text-secondary); }
+  select {
+    font: inherit; color: var(--text-primary); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; min-width: 160px;
+  }
+
+  .alert {
+    margin: 0 0 16px; padding: 10px 14px; border-radius: 8px;
+    border: 1px solid var(--critical); color: var(--text-primary); background: var(--surface);
+  }
+  .alert::before { content: "⚠ "; color: var(--critical); }
+  .alert.warn { border-color: var(--warning-bg); white-space: pre-line; overflow-wrap: anywhere; }
+  .alert.warn::before { color: var(--warning-bg); }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .kpi .label { color: var(--text-secondary); font-size: 13px; }
+  .kpi .value { font-size: 22px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+
+  .grid {
+    display: grid; gap: 16px; margin-top: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+  .card h2 { font-size: 15px; margin: 0; }
+  .card .hint { margin: 2px 0 8px; color: var(--text-muted); font-size: 13px; }
+  .chart { position: relative; height: 280px; }
+  .empty { color: var(--text-muted); text-align: center; margin: 24px 0; }
+  .wide { margin-top: 16px; }
+
+  .table-wrap { overflow-x: auto; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 600; font-size: 13px; }
+  td.num, th.num { text-align: right; }
+  td.name { white-space: normal; min-width: 180px; }
+
+  @media (max-width: 600px) {
+    .chart { height: 240px; }
+    .kpi .value { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div>
+      <h1>광고 성과 대시보드</h1>
+      <p class="sub" id="periodLabel">Meta 광고 × Qoo10 주문</p>
+    </div>
+    <div class="freshness" aria-live="polite">
+      <span class="fresh" id="freshMeta">Meta 갱신: -</span>
+      <span class="fresh" id="freshQoo10">Qoo10 갱신: -</span>
+    </div>
+  </header>
+
+  <div class="filters">
+    <div class="seg" role="group" aria-label="조회 기간">
+      <button type="button" data-days="7" aria-pressed="false">7일</button>
+      <button type="button" data-days="14" aria-pressed="true">14일</button>
+      <button type="button" data-days="30" aria-pressed="false">30일</button>
+    </div>
+    <label>상품코드
+      <select id="productSelect"><option value="">광고 상품 전체</option></select>
+    </label>
+  </div>
+
+  <div class="alert" id="errorBox" role="alert" hidden></div>
+  <div class="alert warn" id="collectAlert" role="status" hidden></div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <article class="card">
+      <h2>광고비 vs 노출수</h2>
+      <p class="hint">광고비 대비 노출 효과</p>
+      <div class="chart"><canvas id="chartSpend" aria-label="일자별 광고비와 노출수"></canvas></div>
+    </article>
+    <article class="card">
+      <h2>링크클릭 vs 큐텐 주문수</h2>
+      <p class="hint">광고 클릭이 주문으로 이어지는지</p>
+      <div class="chart"><canvas id="chartClicks" aria-label="일자별 링크클릭과 큐텐 주문수"></canvas></div>
+    </article>
+    <article class="card">
+      <h2>구매전환율 · ROAS 추이</h2>
+      <p class="hint">전환율 = 주문수 ÷ 링크클릭, ROAS = 매출 ÷ 광고비(엔화 환산)</p>
+      <div class="chart"><canvas id="chartRates" aria-label="일자별 구매전환율과 ROAS"></canvas></div>
+    </article>
+    <article class="card">
+      <h2>상품코드별 매출</h2>
+      <p class="hint">큐텐 매출(¥), 취소·반품 제외</p>
+      <div class="chart" id="productsBox"><canvas id="chartProducts" aria-label="상품코드별 매출"></canvas></div>
+      <p class="empty" id="productsEmpty" hidden>표시할 주문이 없습니다</p>
+    </article>
+  </section>
+
+  <section class="card wide">
+    <h2>캠페인별 상세</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>캠페인</th>
+            <th class="num">광고비</th>
+            <th class="num">노출수</th>
+            <th class="num">링크클릭</th>
+            <th class="num">CTR</th>
+          </tr>
+        </thead>
+        <tbody id="campaignRows"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+  const REFRESH_MS = 60 * 1000;
+  // GitHub Pages에는 서버가 없어서, GitHub Actions가 1시간마다 만들어 둔 JSON 파일(data/)을 읽는다.
+  const STATIC_DATA = location.hostname.endsWith('.github.io');
+  // 정적 모드는 갱신 주기가 1시간이고 Actions 예약 실행이 늦어질 수 있어 기준을 넉넉히 잡는다.
+  const STALE_MINUTES = STATIC_DATA ? 150 : 30;
+
+  const state = { days: 14, product: '', currency: null, seq: 0, last: null };
+  const $ = id => document.getElementById(id);
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  // ---------- 숫자 형식 ----------
+  const nf0 = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 });
+  const nf2 = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nf1 = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 });
+  const nfCompact =new Intl.NumberFormat('ko-KR', { notation: 'compact', maximumFractionDigits: 1 });
+  const SYMBOL = { JPY: '¥', KRW: '₩', USD: '$', EUR: '€' };
+
+  function withCurrency(text) {
+    const cur = state.currency;
+    if (!cur) return text;
+    return SYMBOL[cur] ? SYMBOL[cur] + text : text + ' ' + cur;
+  }
+  const fmt = {
+    int: v => nf0.format(v),
+    pct: v => nf2.format(v) + '%',
+    pctTick: v => nf1.format(v) + '%',
+    yen: v => '¥' + nf0.format(v),
+    yenCompact: v => '¥' + nfCompact.format(v),
+    compact: v => nfCompact.format(v),
+    // 엔·원은 소수점 없이, 그 밖의 통화는 2자리
+    spend: v => withCurrency(['JPY', 'KRW', null].includes(state.currency) ? nf0.format(v) : nf2.format(v)),
+    spendCompact: v => withCurrency(nfCompact.format(v)),
+  };
+
+  // ---------- KPI 카드 ----------
+  const KPIS = [
+    ['spend', '광고비', v => fmt.spend(v)],
+    ['impressions', '노출수', fmt.int],
+    ['linkClicks', '링크클릭', fmt.int],
+    ['ctr', 'CTR', fmt.pct],
+    ['orders', '큐텐 주문수', fmt.int],
+    ['revenueJpy', '큐텐 매출', fmt.yen],
+    ['conversionRate', '구매전환율', fmt.pct],
+    ['roas', 'ROAS', fmt.pct],
+    ['cpa', 'CPA', v => fmt.spend(v)],
+  ];
+  $('kpis').innerHTML = KPIS.map(([key, label]) =>
+    `<div class="kpi"><div class="label">${label}</div><div class="value" id="kpi-${key}">-</div></div>`).join('');
+
+  // ---------- 차트 ----------
+  Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif';
+  Chart.defaults.color = cssVar('--text-muted');
+  Chart.defaults.borderColor = cssVar('--grid');
+
+  function barSet(label, colorVar, axisId, format) {
+    return {
+      type: 'bar', label, data: [], format, yAxisID: axisId, order: 2,
+      backgroundColor: cssVar(colorVar), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 28,
+    };
+  }
+  function lineSet(label, colorVar, axisId, format) {
+    return {
+      type: 'line', label, data: [], format, yAxisID: axisId, order: 1,
+      // 일자별 값이라 점과 점을 직선으로 잇는다 (곡선 보간은 없는 날에도 값이 있는 것처럼 보이게 함)
+      borderColor: cssVar(colorVar), backgroundColor: cssVar(colorVar), borderWidth: 2, tension: 0,
+      pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 12,
+    };
+  }
+  function valueAxis(position, title, tickFormat, { grid = true, integer = false } = {}) {
+    return {
+      position, beginAtZero: true,
+      title: { display: true, text: title, color: cssVar('--text-secondary') },
+      grid: { drawOnChartArea: grid },
+      ticks: { callback: v => tickFormat(v), maxTicksLimit: 6, precision: integer ? 0 : undefined },
+    };
+  }
+  function options(scales, extra = {}) {
+    return {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      scales: { x: { grid: { display: false } }, ...scales },
+      plugins: {
+        // 선을 막대 위에 그리려고 dataset.order를 썼기 때문에, 범례·툴팁 순서는 dataset 순서로 되돌린다.
+        legend: {
+          position: 'top', align: 'start',
+          labels: {
+            usePointStyle: true, boxWidth: 8, boxHeight: 8, color: cssVar('--text-secondary'),
+            sort: (a, b) => a.datasetIndex - b.datasetIndex,
+          },
+        },
+        tooltip: {
+          itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
+          callbacks: {
+            label: c => {
+              const v = c.chart.options.indexAxis === 'y' ? c.parsed.x : c.parsed.y;
+              return ` ${c.dataset.label}: ${c.dataset.format(v)}`;
+            },
+          },
+        },
+      },
+      ...extra,
+    };
+  }
+
+  const charts = {
+    spend: new Chart($('chartSpend'), {
+      type: 'bar',
+      data: { labels: [], datasets: [
+        barSet('광고비', '--series-spend', 'y', v => fmt.spend(v)),
+        lineSet('노출수', '--series-imp', 'y1', fmt.int),
+      ] },
+      options: options({
+        y: valueAxis('left', '광고비', v => fmt.spendCompact(v)),
+        y1: valueAxis('right', '노출수', fmt.compact, { grid: false, integer: true }),
+      }),
+    }),
+    clicks: new Chart($('chartClicks'), {
+      type: 'bar',
+      data: { labels: [], datasets: [
+        barSet('링크클릭', '--series-click', 'y', fmt.int),
+        lineSet('큐텐 주문수', '--series-qoo10', 'y1', fmt.int),
+      ] },
+      options: options({
+        y: valueAxis('left', '링크클릭', fmt.compact, { integer: true }),
+        y1: valueAxis('right', '주문수', fmt.int, { grid: false, integer: true }),
+      }),
+    }),
+    rates: new Chart($('chartRates'), {
+      type: 'line',
+      data: { labels: [], datasets: [
+        lineSet('구매전환율', '--series-qoo10', 'y', fmt.pct),
+        lineSet('ROAS', '--series-roas', 'y1', fmt.pct),
+      ] },
+      options: options({
+        y: valueAxis('left', '구매전환율 (%)', fmt.pctTick),
+        y1: valueAxis('right', 'ROAS (%)', fmt.pctTick, { grid: false }),
+      }),
+    }),
+    products: new Chart($('chartProducts'), {
+      type: 'bar',
+      data: { labels: [], datasets: [{
+        label: '매출', data: [], format: fmt.yen, xAxisID: 'x',
+        backgroundColor: cssVar('--series-qoo10'), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 24,
+      }] },
+      options: options({
+        x: { beginAtZero: true, grid: { display: true }, ticks: { callback: v => fmt.yenCompact(v), maxTicksLimit: 6 } },
+        y: { grid: { display: false } },
+      }, { indexAxis: 'y', interaction: { mode: 'nearest', axis: 'y', intersect: false } }),
+    }),
+  };
+  charts.products.options.plugins.legend.display = false;
+
+  function setSeries(chart, labels, series) {
+    chart.data.labels = labels;
+    series.forEach((values, i) => { chart.data.datasets[i].data = values; });
+    chart.update();
+  }
+
+  // ---------- 렌더링 ----------
+  function render(data) {
+    state.currency = data.spendCurrency;
+    const daily = data.daily;
+    const labels = daily.map(d => d.date.slice(5).replace('-', '/'));
+
+    for (const [key, , format] of KPIS) {
+      $('kpi-' + key).textContent = format(data.summary[key]);
+    }
+
+    setSeries(charts.spend, labels, [daily.map(d => d.spend), daily.map(d => d.impressions)]);
+    setSeries(charts.clicks, labels, [daily.map(d => d.linkClicks), daily.map(d => d.orders)]);
+    setSeries(charts.rates, labels, [daily.map(d => d.conversionRate), daily.map(d => d.roas)]);
+
+    const products = data.products;
+    $('productsEmpty').hidden = products.length > 0;
+    $('productsBox').hidden = products.length === 0;
+    $('productsBox').style.height = Math.max(160, products.length * 34 + 48) + 'px';
+    setSeries(charts.products, products.map(p => p.productCode), [products.map(p => p.revenueJpy)]);
+
+    renderCampaigns(data.campaigns);
+    renderProductOptions(data);
+    renderFreshness(data.lastUpdated);
+    renderCollectErrors(data.collectErrors || {});
+  }
+
+  // 마지막 수집이 실패한 소스가 있으면 사유를 그대로 보여준다 (예: Meta 토큰 만료)
+  function renderCollectErrors(errors) {
+    const lines = [];
+    if (errors.meta) lines.push('Meta 수집 실패: ' + errors.meta);
+    if (errors.qoo10) lines.push('Qoo10 수집 실패: ' + errors.qoo10);
+    $('collectAlert').hidden = lines.length === 0;
+    $('collectAlert').textContent = lines.join('\n');
+  }
+
+  function renderCampaigns(campaigns) {
+    const tbody = $('campaignRows');
+    tbody.replaceChildren();
+    if (campaigns.length === 0) {
+      const tr = tbody.insertRow();
+      const td = tr.insertCell();
+      td.colSpan = 5;
+      td.className = 'empty';
+      td.textContent = '기간 내 캠페인 데이터가 없습니다';
+      return;
+    }
+    for (const c of campaigns) {
+      const tr = tbody.insertRow();
+      const cells = [
+        [c.campaignName, 'name'],
+        [fmt.spend(c.spend), 'num'],
+        [fmt.int(c.impressions), 'num'],
+        [fmt.int(c.linkClicks), 'num'],
+        [fmt.pct(c.ctr), 'num'],
+      ];
+      for (const [text, cls] of cells) {
+        const td = tr.insertCell();
+        td.className = cls;
+        td.textContent = text; // 캠페인명은 외부 데이터라 textContent로만 넣는다
+      }
+    }
+  }
+
+  // 설정의 광고 상품 + 조회된 상품을 합쳐 옵션을 만들고, 한 번 나온 코드는 계속 유지한다.
+  const knownProducts = new Set();
+  function renderProductOptions(data) {
+    data.productCodes.forEach(c => knownProducts.add(c));
+    data.products.forEach(p => knownProducts.add(p.productCode));
+    const select = $('productSelect');
+    const existing = new Set([...select.options].map(o => o.value));
+    [...knownProducts].sort().forEach(code => {
+      if (!existing.has(code)) select.add(new Option(code, code));
+    });
+    select.value = state.product;
+  }
+
+  const pad = n => String(n).padStart(2, '0');
+  function renderFreshness(lastUpdated) {
+    showFreshness($('freshMeta'), 'Meta', lastUpdated.meta);
+    showFreshness($('freshQoo10'), 'Qoo10', lastUpdated.qoo10);
+  }
+  function showFreshness(el, name, iso) {
+    const t = iso ? new Date(iso) : null;
+    const minutes = t ? Math.floor((Date.now() - t.getTime()) / 60000) : null;
+    const stale = t === null || minutes >= STALE_MINUTES;
+    const when = t ? `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}` : '없음';
+    el.classList.toggle('stale', stale);
+    el.textContent = `${stale ? '⚠ ' : ''}${name} 갱신: ${when}`;
+    el.title = t === null ? '수집 성공 기록이 없습니다'
+      : `${minutes}분 전${stale ? ` · ${STALE_MINUTES}분 이상 갱신되지 않았습니다` : ''}`;
+  }
+
+  function showError(message) {
+    $('errorBox').hidden = !message;
+    $('errorBox').textContent = message || '';
+  }
+
+  // ---------- 조회 ----------
+  // 날짜 경계는 Qoo10 Japan 기준(JST)
+  function todayJst() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date());
+  }
+  function addDays(ymd, days) {
+    const d = new Date(ymd + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  async function load() {
+    const seq = ++state.seq;
+    const to = todayJst();
+    const from = addDays(to, -(state.days - 1));
+    const query = new URLSearchParams({ from, to });
+    if (state.product) query.set('productCode', state.product);
+    $('periodLabel').textContent = `${from} ~ ${to} (JST) · Meta 광고 × Qoo10 주문`;
+
+    try {
+      const url = STATIC_DATA
+        ? `data/dashboard-${state.days}-${state.product || 'all'}.json`
+        : 'api/dashboard?' + query;
+      const res = await fetch(url, { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      if (seq !== state.seq) return; // 그사이 필터가 바뀌었으면 늦게 온 응답은 버린다
+      if (STATIC_DATA && body.daily.length > 0) {
+        // 파일은 만들어진 시점의 기간이므로, 자정 직후에는 오늘 기준 기간과 하루 어긋날 수 있다.
+        $('periodLabel').textContent =
+          `${body.daily[0].date} ~ ${body.daily[body.daily.length - 1].date} (JST) · Meta 광고 × Qoo10 주문`;
+      }
+      state.last = body;
+      render(body);
+      showError(null);
+    } catch (e) {
+      if (seq !== state.seq) return;
+      showError(`데이터를 불러오지 못했습니다: ${e.message}`);
+      if (state.last) renderFreshness(state.last.lastUpdated); // 이전 화면은 유지하고 갱신 경과만 다시 계산
+    }
+  }
+
+  document.querySelectorAll('.seg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.days = Number(btn.dataset.days);
+      document.querySelectorAll('.seg button')
+        .forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      load();
+    });
+  });
+  $('productSelect').addEventListener('change', e => {
+    state.product = e.target.value;
+    load();
+  });
+
+  load();
+  setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>

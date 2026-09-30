@@ -1,0 +1,8 @@
+# 토큰·인증키·비밀번호가 들어 있는 톰캣용 설정 (절대 올리지 않는다)
+src/main/webapp/WEB-INF/config.properties
+
+# 빌드 결과, 정적 내보내기 결과, 로컬 DB
+build/
+out/
+site/
+data/
