@@ -13,18 +13,16 @@ permissions:
   pages: write
   id-token: write
 
-# 같은 DB 캐시를 두 실행이 동시에 쓰지 않도록 한 번에 하나만 돌린다.
-concurrency:
-  group: collect
-  cancel-in-progress: false
-
+# 수집과 배포를 다른 잡으로 나눈다. 배포 잡은 github-pages 환경 승인 단계를 거치는데,
+# 2026-10-07에 이 단계에서 실행 하나가 'waiting'으로 멈춰 이후 실행이 전부 막힌 적이 있다.
 jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    # 같은 DB 캐시를 두 실행이 동시에 쓰지 않도록 수집은 한 번에 하나만 돌린다.
+    concurrency:
+      group: collect-db
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -71,5 +69,18 @@ jobs:
         with:
           path: site
 
+  deploy:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    # 새 배포가 오면 대기·진행 중인 이전 배포는 취소한다 (새 데이터가 어차피 덮어쓴다).
+    # 그래서 배포가 다시 멈춰도 다음 시간 실행이 자동으로 풀어 준다.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: true
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4

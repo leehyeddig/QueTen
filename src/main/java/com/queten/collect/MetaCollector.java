@@ -3,6 +3,7 @@ package com.queten.collect;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -14,6 +15,7 @@ import com.queten.dao.MetaInsightDao;
 /**
  * Meta Insights 주기 수집.
  * 평소에는 최근 N일(meta.recollect.days)을 다시 받아 덮어쓴다 (Meta가 과거 수치를 보정하기 때문).
+ * 마지막 성공이 그보다 오래됐으면(수집이 멈췄던 경우) 마지막 성공일부터 받아 빈 날짜를 메운다.
  * 성공 이력이 없으면(최초 실행) meta.backfill.days 만큼 과거를 meta.chunk.days 단위로 나눠 받는다.
  */
 public class MetaCollector implements Runnable {
@@ -66,8 +68,15 @@ public class MetaCollector implements Runnable {
             }
 
             LocalDate today = startedAt.toLocalDate();
-            boolean firstRun = statusDao.lastSuccess(SOURCE).isEmpty();
+            Optional<LocalDateTime> lastSuccess = statusDao.lastSuccess(SOURCE);
+            boolean firstRun = lastSuccess.isEmpty();
             LocalDate from = today.minusDays((firstRun ? backfillDays : recollectDays) - 1L);
+            if (!firstRun && lastSuccess.get().toLocalDate().isBefore(from)) {
+                // 수집이 며칠 멈췄다면 마지막 성공일(그날은 일부만 받았다)부터 다시 받아 빈 날짜를 메운다.
+                LocalDate gapFrom = lastSuccess.get().toLocalDate();
+                LocalDate earliest = today.minusDays(backfillDays - 1L);
+                from = gapFrom.isBefore(earliest) ? earliest : gapFrom;
+            }
             if (firstRun) {
                 LOG.info("Meta 최초 백필 시작: " + from + " ~ " + today);
             }
